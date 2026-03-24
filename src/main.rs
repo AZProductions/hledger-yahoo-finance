@@ -17,7 +17,9 @@ enum Command {
     #[clap(
         about = "Search for a stock symbol. \nUse this if you don't know the exact stock symbol of the stock you are interested in."
     )]
-    SearchStockSymbol { search_query: String },
+    SearchStockSymbol {
+        search_query: String,
+    },
     #[clap(about = "Outputs historic market prices of a stock in a hledger compatible format.")]
     History {
         #[clap(help = "Symbol of the stock as given by the `history` subcommand")]
@@ -50,6 +52,7 @@ enum Command {
         )]
         commodity_symbol_before: bool,
     },
+    PrintCommodities {},
 }
 
 #[tokio::main]
@@ -77,6 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 commodity_symbol_before,
             )
             .await;
+        }
+        Command::PrintCommodities {} => {
+            hledger_tools::print_commodities().await;
         }
     }
 

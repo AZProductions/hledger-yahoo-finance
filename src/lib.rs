@@ -188,3 +188,47 @@ pub async fn get_history_for_stock(
             .unwrap_or_else(|e| report_application_bug("Failed writing to journal file", Some(e)));
     }
 }
+
+pub async fn print_commodities() {
+    use hledger_parse::{Journal, parse_journal};
+    use std::collections::BTreeSet;
+
+    let journal_file_path = std::env::var("LEDGER_FILE").unwrap_or_else(|error| {
+        match error {
+            std::env::VarError::NotPresent => {
+                eprintln!("Error: HLEDGER_JOURNAL_FILE environment variable is not set");
+            }
+            std::env::VarError::NotUnicode(_) => {
+                eprintln!(
+                    "Error: HLEDGER_JOURNAL_FILE environment variable contains invalid unicode"
+                );
+            }
+        }
+        std::process::exit(1);
+    });
+
+    let file_contents = std::fs::read_to_string(&journal_file_path).unwrap_or_else(|error| {
+        report_application_bug("Couldn't read journal file", Some(error));
+    });
+
+    let base_path = std::path::PathBuf::from(&journal_file_path)
+        .parent()
+        .map(|v| v.to_owned());
+
+    let mut input = file_contents.as_str();
+    let journal: Journal = parse_journal(&mut input, base_path).unwrap_or_else(|error| {
+        report_application_bug("Failed to parse journal file", Some(error));
+    });
+
+    let mut commodities: BTreeSet<String> = BTreeSet::new();
+
+    // Iterate through all transactions and collect commodities
+    for commodity in journal.commodities() {
+        commodities.insert(commodity.name.to_string());
+    }
+
+    println!("Commodities found in journal file:");
+    for commodity in commodities {
+        println!("  {}", commodity);
+    }
+}
