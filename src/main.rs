@@ -53,6 +53,16 @@ enum Command {
         commodity_symbol_before: bool,
     },
     PrintCommodities {},
+    #[clap(about = "Update market prices for all commodities in the journal")]
+    UpdateAllPrices {
+        #[clap(
+            short,
+            long,
+            default_value = "EUR",
+            help = "Base currency to use as the price reference (e.g., EUR, USD)"
+        )]
+        base_currency: String,
+    },
 }
 
 #[tokio::main]
@@ -83,6 +93,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::PrintCommodities {} => {
             hledger_tools::print_commodities().await;
+        }
+        Command::UpdateAllPrices { base_currency } => {
+            hledger_tools::update_all_commodity_prices(&base_currency).await;
         }
     }
 

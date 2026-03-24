@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::NaiveDate;
+use hledger_parse::{Amount, Price};
+use rust_decimal::Decimal;
 use yahoo_finance_api as yahoo;
 
 #[allow(
@@ -231,4 +234,184 @@ pub async fn print_commodities() {
     for commodity in commodities {
         println!("  {}", commodity);
     }
+}
+
+/// Fetch and update market prices for all commodities in the journal
+///
+/// This function:
+/// - Reads all commodities from the LEDGER_FILE
+/// - Skips the base currency (e.g., EUR)
+/// - Creates/updates `.journal` files in the journal's directory for each commodity
+/// - Fetches historical prices from Yahoo Finance
+/// - Appends only new prices (avoiding duplicates)
+/// - Uses hledger Price format for output
+pub async fn update_all_commodity_prices(base_currency: &str) {
+    use hledger_parse::parse_journal;
+    use std::collections::BTreeSet;
+
+    // Get LEDGER_FILE environment variable
+    let journal_file_path = std::env::var("LEDGER_FILE").unwrap_or_else(|error| {
+        match error {
+            std::env::VarError::NotPresent => {
+                eprintln!("Error: LEDGER_FILE environment variable is not set");
+            }
+            std::env::VarError::NotUnicode(_) => {
+                eprintln!("Error: LEDGER_FILE environment variable contains invalid unicode");
+            }
+        }
+        std::process::exit(1);
+    });
+
+    let file_contents = std::fs::read_to_string(&journal_file_path).unwrap_or_else(|error| {
+        report_application_bug("Couldn't read journal file", Some(error));
+    });
+
+    let journal_dir = std::path::PathBuf::from(&journal_file_path)
+        .parent()
+        .map(|v| v.to_owned())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let base_path = Some(journal_dir.clone());
+
+    let mut input = file_contents.as_str();
+    let journal = parse_journal(&mut input, base_path).unwrap_or_else(|error| {
+        report_application_bug("Failed to parse journal file", Some(error));
+    });
+
+    // Collect all commodities except the base currency
+    let mut commodities: BTreeSet<String> = BTreeSet::new();
+    for commodity in journal.commodities() {
+        let name = commodity.name.to_string();
+        if name != base_currency {
+            commodities.insert(name);
+        }
+    }
+
+    if commodities.is_empty() {
+        println!("No commodities found (excluding {})", base_currency);
+        return;
+    }
+
+    let provider = yahoo::YahooConnector::new().unwrap_or_else(|error| {
+        report_application_bug("Could not create YahooConnector", Some(error))
+    });
+
+    // Fetch prices for each commodity
+    for commodity in commodities {
+        let prices_file = journal_dir.join(format!("{commodity}.journal"));
+
+        // Get the latest date from existing file if it exists
+        let latest_date = if prices_file.exists() {
+            get_latest_price_date(&prices_file)
+        } else {
+            None
+        };
+
+        // Fetch from Yahoo
+        let response = provider
+            .get_quote_range(&commodity, "1d", "max")
+            .await
+            .unwrap_or_else(|error| {
+                report_application_bug(
+                    &format!("Failed to fetch data for {commodity}"),
+                    Some(error),
+                )
+            });
+
+        let quotes = response.quotes().unwrap_or_else(|error| {
+            report_application_bug("Could not extract quotes from response", Some(error))
+        });
+
+        // Build prices, filtering out dates we already have
+        let mut prices: Vec<Price> = quotes
+            .iter()
+            .filter_map(|quote| {
+                let date = time::OffsetDateTime::from_unix_timestamp(quote.timestamp).ok()?;
+                let naive_date =
+                    NaiveDate::from_ymd_opt(date.year(), date.month() as u32, date.day() as u32)?;
+
+                // Skip if we already have this date
+                if let Some(latest) = latest_date {
+                    if naive_date <= latest {
+                        return None;
+                    }
+                }
+
+                Some(Price {
+                    commodity: commodity.clone(),
+                    date: naive_date,
+                    amount: Amount {
+                        currency: base_currency.to_string(),
+                        value: Decimal::from_f64_retain(quote.close)?,
+                    },
+                })
+            })
+            .collect();
+
+        if prices.is_empty() {
+            println!("No new prices for {commodity}");
+            continue;
+        }
+
+        // Sort by date ascending
+        prices.sort_by(|a, b| a.date.cmp(&b.date));
+
+        // Write to file (append mode if exists, create if not)
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&prices_file)
+            .unwrap_or_else(|e| report_application_bug("Couldn't open prices file", Some(e)));
+
+        // Only write header if file is empty
+        let file_is_empty = prices_file.metadata().map(|m| m.len() == 0).unwrap_or(true);
+
+        if file_is_empty {
+            writeln!(
+                file,
+                "; Generated by {}",
+                concat!(env!("CARGO_PKG_NAME"), " V", env!("CARGO_PKG_VERSION"))
+            )
+            .unwrap_or_else(|e| report_application_bug("Failed writing to prices file", Some(e)));
+        }
+
+        let price_count = prices.len();
+        for price in prices {
+            writeln!(file, "{}", price).unwrap_or_else(|e| {
+                report_application_bug("Failed writing to prices file", Some(e))
+            });
+        }
+
+        println!("Updated {commodity}: {} new prices", price_count);
+    }
+}
+
+/// Helper function to get the latest price date from a prices file
+/// Parses the file line-by-line and extracts dates from P lines
+fn get_latest_price_date(prices_file: &Path) -> Option<NaiveDate> {
+    let file = File::open(prices_file).ok()?;
+    let reader = BufReader::new(file);
+
+    let mut latest_date: Option<NaiveDate> = None;
+
+    for line in reader.lines() {
+        let line = line.ok()?;
+        let trimmed = line.trim_start();
+
+        if !trimmed.starts_with('P') {
+            continue;
+        }
+
+        // Parse "P YYYY-MM-DD ..." format
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= 2 {
+            if let Ok(date) = NaiveDate::parse_from_str(parts[1], "%Y-%m-%d") {
+                if latest_date.is_none() || date > latest_date.unwrap() {
+                    latest_date = Some(date);
+                }
+            }
+        }
+    }
+
+    latest_date
 }

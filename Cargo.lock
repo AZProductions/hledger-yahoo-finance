@@ -572,9 +572,12 @@ dependencies = [
 name = "hledger-tools"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "hledger-parse",
  "reqwest 0.13.2",
+ "rust_decimal",
+ "rust_decimal_macros",
  "time",
  "tokio",
  "yahoo_finance_api",
