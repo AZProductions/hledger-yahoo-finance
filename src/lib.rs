@@ -9,7 +9,8 @@ use std::{
 };
 
 use chrono::NaiveDate;
-use hledger_parse::parse_journal;
+use hledger_parse::{Amount, Price, parse_journal};
+use rust_decimal::Decimal;
 use yahoo_finance_api as yahoo;
 
 fn report_error<E: std::error::Error>(error_string: &str, error: Option<E>) -> ! {
@@ -80,7 +81,7 @@ pub async fn update_daily_prices(base_currency: &str) {
 
         // Fetch from Yahoo
         let response = provider
-            .get_quote_range(&commodity, "1d", "max")
+            .get_quote_range(&commodity, "1d", "10y")
             .await
             .unwrap_or_else(|error| {
                 report_error(
@@ -94,7 +95,7 @@ pub async fn update_daily_prices(base_currency: &str) {
         });
 
         // Build prices, filtering out dates we already have
-        let mut new_prices: Vec<(NaiveDate, f64)> = quotes
+        let mut new_prices: Vec<Price> = quotes
             .iter()
             .filter_map(|quote| {
                 // Convert Unix timestamp to date using chrono
@@ -108,7 +109,16 @@ pub async fn update_daily_prices(base_currency: &str) {
                     }
                 }
 
-                Some((date, quote.close))
+                Some(Price {
+                    date,
+                    commodity: format!("\"{}\"", commodity.clone()),
+                    amount: Amount {
+                        currency: base_currency.to_string(),
+                        value: Decimal::from_f64_retain(quote.close)
+                            .unwrap_or_default()
+                            .round_dp(2),
+                    },
+                })
             })
             .collect();
 
@@ -118,7 +128,7 @@ pub async fn update_daily_prices(base_currency: &str) {
         }
 
         // Sort by date ascending
-        new_prices.sort_by(|a, b| a.0.cmp(&b.0));
+        new_prices.sort_by(|a, b| a.date.cmp(&b.date));
 
         // Write to file (append mode if exists, create if not)
         let mut file = std::fs::OpenOptions::new()
@@ -140,13 +150,9 @@ pub async fn update_daily_prices(base_currency: &str) {
         }
 
         let price_count = new_prices.len();
-        for (date, price) in new_prices {
-            writeln!(
-                file,
-                "P {} {} {} {:.2}",
-                date, commodity, base_currency, price
-            )
-            .unwrap_or_else(|e| report_error("Failed writing to prices file", Some(e)));
+        for price in new_prices {
+            writeln!(file, "{}", price)
+                .unwrap_or_else(|e| report_error("Failed writing to prices file", Some(e)));
         }
 
         println!("Updated {commodity}: {} new prices", price_count);
