@@ -1,6 +1,7 @@
 #![deny(clippy::pedantic)]
 #![deny(clippy::nursery)]
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -25,10 +26,10 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     match App::parse().command {
         Command::Daily { base_currency } => {
-            hledger_tools::update_daily_prices(&base_currency).await;
+            hledger_tools::update_daily_prices(&base_currency).await?;
         }
     }
 
