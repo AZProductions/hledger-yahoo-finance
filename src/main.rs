@@ -23,6 +23,8 @@ enum Command {
         )]
         base_currency: String,
     },
+    #[clap(about = "Import statements from a bank account")]
+    Import { csv: String },
 }
 
 #[tokio::main]
@@ -30,6 +32,9 @@ async fn main() -> Result<()> {
     match App::parse().command {
         Command::Daily { base_currency } => {
             hledger_tools::update_daily_prices(&base_currency).await?;
+        }
+        Command::Import { csv } => {
+            hledger_tools::import_statements(&csv).await?;
         }
     }
 

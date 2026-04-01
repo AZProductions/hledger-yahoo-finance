@@ -1,17 +1,17 @@
 #![deny(clippy::pedantic)]
 #![deny(clippy::nursery)]
 
+use anyhow::{Context, Result};
+use chrono::NaiveDate;
+use hledger_parse::{Amount, Description, Posting, Price, Status, Transaction, parse_journal};
+use rust_decimal::Decimal;
+use serde::Deserialize;
 use std::{
     collections::BTreeSet,
     fs::File,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
 };
-
-use anyhow::{Context, Result};
-use chrono::NaiveDate;
-use hledger_parse::{Amount, Price, parse_journal};
-use rust_decimal::Decimal;
 use yahoo_finance_api as yahoo;
 
 /// Fetch daily prices for all commodities in the journal
@@ -206,4 +206,92 @@ fn get_latest_price_date(prices_file: &Path) -> Result<Option<NaiveDate>> {
     }
 
     Ok(latest_date)
+}
+
+pub async fn import_statements(csv: &str) -> Result<()> {
+    let file = std::fs::read_to_string(csv)?;
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(file.as_bytes());
+
+    let mut transactions: Vec<Transaction> = Vec::new();
+    for result in rdr.deserialize() {
+        let record: CSVTransaction = result?;
+
+        transactions.push(Transaction {
+            primary_date: record.date,
+            secondary_date: Some(record.rentedatum),
+            status: Status::Cleared,
+            code: Some("12345".to_string()),
+            description: Description {
+                payee: None,
+                note: Some(record.omschrijving),
+            },
+            postings: vec![
+                Posting {
+                    status: Status::Cleared,
+                    account: "assets:cash".into(),
+                    amount: Some(Amount {
+                        currency: record.currency,
+                        value: record.transactiebedrag,
+                    }),
+                    unit_price: None,
+                    total_price: None,
+                    balance_assertion: Some(Amount {
+                        currency: record.currency,
+                        value: record.eindsaldo,
+                    }),
+                },
+                Posting {
+                    status: Status::Cleared,
+                    account: "TODO".into(),
+                    amount: Some(Amount {
+                        currency: "EUR".into(),
+                        value: dec!(5),
+                    }),
+                    unit_price: None,
+                    total_price: None,
+                    balance_assertion: None,
+                },
+            ],
+            tags: vec![
+            //         Tag {
+            //             name: "tag1".to_string(),
+            //             value: Some("some value".to_string()),
+            //         },
+            //         Tag {
+            //             name: "tag2".to_string(),
+            //             value: None,
+            //         },
+            ],
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CSVTransaction {
+    #[serde(rename = "Rekeningnummer")]
+    account_number: String,
+    #[serde(rename = "Muntsoort")]
+    currency: String,
+    #[serde(
+        rename = "Transactiedatum",
+        deserialize_with = "deserialize_naive_date"
+    )]
+    date: NaiveDate,
+    #[serde(rename = "Rentedatum", deserialize_with = "deserialize_naive_date")]
+    rentedatum: NaiveDate,
+    #[serde(rename = "Beginsaldo")]
+    beginsaldo: Decimal,
+    #[serde(rename = "Eindsaldo")]
+    eindsaldo: Decimal,
+    #[serde(rename = "Transactiebedrag")]
+    transactiebedrag: Decimal,
+    #[serde(rename = "Omschrijving")]
+    omschrijving: String,
+}
+fn deserialize_naive_date<'de, D: serde::Deserializer<'de>>(d: D) -> Result<NaiveDate, D::Error> {
+    let s = String::deserialize(d)?;
+    NaiveDate::parse_from_str(&s, "%Y%m%d").map_err(serde::de::Error::custom)
 }
