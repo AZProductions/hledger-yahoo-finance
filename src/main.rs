@@ -4,8 +4,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use figment::{
-    providers::{Format, Serialized, Toml},
     Figment,
+    providers::{Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -16,13 +16,10 @@ struct App {
     #[clap(subcommand)]
     command: Command,
 
-    /// Path to the hledger journal file. Defaults to $LEDGER_FILE.
-    #[clap(short, long, env = "LEDGER_FILE")]
-    file: PathBuf,
+    #[clap(short, long, env = "LEDGER_FILE", global = true)]
+    file: Option<PathBuf>,
 
-    /// Path to the directory that contains commodity price include-files.
-    /// Defaults to `<journal-dir>/prices/`.
-    #[clap(long)]
+    #[clap(long, global = true)]
     commodity_path: Option<PathBuf>,
 }
 
@@ -50,26 +47,22 @@ enum Command {
 async fn main() -> Result<()> {
     let app = App::parse();
 
-    let journal_dir = app
+    let config_toml = app
         .file
-        .parent()
-        .context("journal file path has no parent directory")?;
+        .as_deref()
+        .and_then(|p| p.parent())
+        .map(|dir| dir.join("config.toml"));
 
-    let config_toml = journal_dir.join("config.toml");
+    let mut figment = Figment::new().merge(Serialized::defaults(Settings {
+        file: app.file,
+        commodity_path: app.commodity_path,
+    }));
 
-    let settings: Settings = Figment::new()
-        .merge(Serialized::defaults(Settings {
-            file: Some(app.file),
-            commodity_path: app.commodity_path,
-        }))
-        .merge(Toml::file(&config_toml))
-        .extract()
-        .with_context(|| {
-            format!(
-                "failed to load configuration (looked for config.toml at {})",
-                config_toml.display()
-            )
-        })?;
+    if let Some(ref toml_path) = config_toml {
+        figment = figment.merge(Toml::file(toml_path));
+    }
+
+    let settings: Settings = figment.extract().context("failed to load configuration")?;
 
     let ledger_file = settings
         .file
