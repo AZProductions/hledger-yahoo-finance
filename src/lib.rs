@@ -5,7 +5,7 @@ use std::{
     collections::BTreeSet,
     fs::File,
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{Context, Result};
@@ -24,18 +24,15 @@ use yahoo_finance_api as yahoo;
 /// - The journal file cannot be parsed
 /// - Yahoo Finance API calls fail
 /// - Files cannot be opened or written to
-pub async fn update_daily_prices(base_currency: &str) -> Result<()> {
-    let journal_file_path =
-        std::env::var("LEDGER_FILE").context("LEDGER_FILE environment variable is not set")?;
-
+pub async fn update_daily_prices(
+    base_currency: &str,
+    commodity_path: &Path,
+    ledger_file: &Path,
+) -> Result<()> {
     let file_contents =
-        std::fs::read_to_string(&journal_file_path).context("Couldn't read journal file")?;
+        std::fs::read_to_string(ledger_file).context("Couldn't read journal file")?;
 
-    let journal_dir = PathBuf::from(&journal_file_path)
-        .parent()
-        .map_or_else(|| PathBuf::from("."), std::borrow::ToOwned::to_owned);
-
-    let base_path = Some(journal_dir.clone());
+    let base_path = ledger_file.parent().map(std::path::Path::to_path_buf);
 
     let mut input = file_contents.as_str();
     let journal = parse_journal(&mut input, base_path).context("Failed to parse journal file")?;
@@ -50,7 +47,7 @@ pub async fn update_daily_prices(base_currency: &str) -> Result<()> {
     let provider = yahoo::YahooConnector::new().context("Could not create YahooConnector")?;
 
     for commodity in commodities {
-        update_commodity_prices(&provider, &journal_dir, &commodity, base_currency).await?;
+        update_commodity_prices(&provider, commodity_path, &commodity, base_currency).await?;
     }
 
     Ok(())
