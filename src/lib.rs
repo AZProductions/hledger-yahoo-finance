@@ -58,7 +58,7 @@ fn collect_commodities(journal: &hledger_parse::Journal, base_currency: &str) ->
     journal
         .commodities()
         .iter()
-        .map(|c| c.name.clone().trim_matches('"').trim().to_string())
+        .map(|c| c.name.trim_matches('"').trim().to_string())
         .filter(|name| name != base_currency)
         .collect()
 }
@@ -120,9 +120,7 @@ fn build_new_prices(
             let datetime = chrono::DateTime::from_timestamp(quote.timestamp, 0)?;
             let date = datetime.naive_utc().date();
 
-            if let Some(latest) = latest_date
-                && date <= latest
-            {
+            if latest_date.is_some_and(|latest| date <= latest) {
                 return None;
             }
 
@@ -190,13 +188,9 @@ fn get_latest_price_date(prices_file: &Path) -> Result<Option<NaiveDate>> {
         let line = line.context("Failed to read line from prices file")?;
         let trimmed = line.trim_start();
 
-        if !trimmed.starts_with('P') {
-            continue;
-        }
-
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() >= 2
-            && let Ok(date) = NaiveDate::parse_from_str(parts[1], "%Y-%m-%d")
+        if trimmed.starts_with('P')
+            && let Some(date_str) = trimmed.split_whitespace().nth(1)
+            && let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
         {
             latest_date = Some(latest_date.map_or(date, |latest| date.max(latest)));
         }

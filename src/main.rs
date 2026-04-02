@@ -57,9 +57,9 @@ async fn main() -> Result<()> {
         .and_then(|p| p.parent())
         .map(|dir| dir.join("config.toml"));
 
-    let mut figment = Figment::new().merge(Serialized::defaults(app.config));
+    let mut figment = Figment::from(Serialized::defaults(app.config));
 
-    if let Some(ref toml_path) = config_toml {
+    if let Some(toml_path) = config_toml {
         figment = figment.merge(Toml::file(toml_path));
     }
 
@@ -73,16 +73,7 @@ async fn main() -> Result<()> {
         .parent()
         .expect("journal file path has no parent directory");
 
-    let commodity_path = config.commodity_path.map_or_else(
-        || ledger_dir.join("prices"),
-        |p| {
-            if p.is_relative() {
-                ledger_dir.join(p)
-            } else {
-                p
-            }
-        },
-    );
+    let commodity_path = ledger_dir.join(config.commodity_path.unwrap_or_else(|| "prices".into()));
 
     std::fs::create_dir_all(&commodity_path).with_context(|| {
         format!(
