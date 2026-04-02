@@ -69,12 +69,27 @@ async fn main() -> Result<()> {
         .file
         .context("no journal file specified (set LEDGER_FILE or pass --file)")?;
 
-    let commodity_path = config.commodity_path.unwrap_or_else(|| {
-        ledger_file
-            .parent()
-            .expect("journal file path has no parent directory")
-            .join("prices")
-    });
+    let ledger_dir = ledger_file
+        .parent()
+        .expect("journal file path has no parent directory");
+
+    let commodity_path = config.commodity_path.map_or_else(
+        || ledger_dir.join("prices"),
+        |p| {
+            if p.is_relative() {
+                ledger_dir.join(p)
+            } else {
+                p
+            }
+        },
+    );
+
+    std::fs::create_dir_all(&commodity_path).with_context(|| {
+        format!(
+            "failed to create commodity prices directory at {}",
+            commodity_path.display()
+        )
+    })?;
 
     match app.command {
         Command::Daily { base_currency } => {
