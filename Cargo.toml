@@ -14,3 +14,6 @@ serde = "1.0.228"
 tokio = { version = "1.48.0", features = ["full"] }
 toml = "0.8"
 yahoo_finance_api = "4.1.0"
+
+[patch."https://github.com/zbrox/hledger-parse.git"]
+hledger-parse = { path = "/home/zmann/.cargo/git/checkouts/hledger-parse-55854e0f8bb04d6f/4e5b6d9" }
